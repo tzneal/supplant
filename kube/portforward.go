@@ -2,6 +2,7 @@ package kube
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -66,7 +67,10 @@ func PortForward(cs *kubernetes.Clientset, namespace string, resourceName string
 	}
 
 	go func() {
-		fw.ForwardPorts()
+		err := fw.ForwardPorts()
+		if err != nil {
+			log.Printf("error forwarding ports for %s: %s", resourceName, err)
+		}
 	}()
 
 	return fw, nil
