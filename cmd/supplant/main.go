@@ -5,66 +5,21 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
-	"strconv"
-	"strings"
 
+	"github.com/tzneal/supplant"
+	"github.com/tzneal/supplant/kube"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/util/homedir"
 )
-
-type port struct {
-	listenPort  int
-	servicePort int
-}
-
-func parseInt(full, num, name string) int {
-	i, err := strconv.ParseInt(num, 10, 32)
-	if err != nil {
-		log.Fatalf("error parsing %s from %s: %s", name, full, err)
-	}
-
-	if i < 0 || i > 65535 {
-		log.Fatalf("%s %d is out of range", name, i)
-	}
-
-	return int(i)
-}
-
-func parsePorts(ports []string) []port {
-	ret := []port{}
-	for _, p := range ports {
-		parsed := port{}
-		idx := strings.Index(p, ":")
-		if idx != -1 {
-			parsed.listenPort = parseInt(p, p[:idx], "listen port")
-			parsed.servicePort = parseInt(p, p[idx+1:], "service port")
-		} else {
-			parsed.listenPort = parseInt(p, p, "listen port")
-			parsed.servicePort = parsed.listenPort
-		}
-		ret = append(ret, parsed)
-	}
-	return ret
-}
-
-func getOutboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		log.Fatalf("unable to determine outbound IP: %s", err)
-	}
-	defer conn.Close()
-
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return localAddr.IP.String()
-}
 
 func main() {
 	var kubeconfig *string
@@ -73,11 +28,11 @@ func main() {
 	} else {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
-	namespace := flag.String("namespace", v1.NamespaceDefault, "namespace of service")
+	namespace := flag.String("namespace", v1.NamespaceDefault, "namespace of service to supplant")
 	ip := flag.String("ip", "<autodetect>", "IP address to redirect service to")
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage %s: [OPTION]... SERVICE PORT [PORT]...\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage %s: [OPTION]... SERVICE PORT [PORT]...\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -95,35 +50,39 @@ func main() {
 	// use the current context in kubeconfig
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
-		panic(err.Error())
+		log.Fatalf("error building kubeconfig: %s", err)
 	}
 
-	// create the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		panic(err.Error())
+		log.Fatalf("error creating config: %s", err)
 	}
 
 	ctx := context.Background()
-
+	// lookup the service we are replacing
 	svc, err := clientset.CoreV1().Services(*namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if err != nil {
 		log.Fatalf("error retrieving service %s: %s", serviceName, err)
 	}
 
+	// user must specify the same number of ports as the service provides
 	if len(ports) != len(svc.Spec.Ports) {
 		log.Fatalf("service %s has %d ports, but only %d ports provided on command line", svc.Name, len(svc.Spec.Ports), len(ports))
 	}
 
-	svcPorts := map[int]v1.ServicePort{}
+	svcPorts := map[int32]v1.ServicePort{}
 	for _, port := range svc.Spec.Ports {
-		svcPorts[int(port.Port)] = port
+		svcPorts[port.Port] = port
 	}
 
 	if *ip == "<autodetect>" {
-		*ip = getOutboundIP()
+		*ip, err = supplant.GetOutboundIP()
+		if err != nil {
+			log.Fatalf("error determining outbound IP address: %s", err)
+		}
 	}
 
+	// ensure that the user provided ports match the service's ports
 	for _, port := range ports {
 		_, ok := svcPorts[port.servicePort]
 		if !ok {
@@ -139,15 +98,13 @@ func main() {
 	for _, port := range ports {
 		var newPort v1.ServicePort
 		newPort.Port = int32(port.servicePort)
-		newPort.TargetPort = intstr.FromInt(port.listenPort)
+		newPort.TargetPort = intstr.FromInt(int(port.listenPort))
 		newPort.Protocol = svcPorts[port.servicePort].Protocol
 		svc.Spec.Ports = append(svc.Spec.Ports, newPort)
 	}
 
-	if svc.ObjectMeta.Labels == nil {
-		svc.ObjectMeta.Labels = map[string]string{}
-	}
-	svc.ObjectMeta.Labels["supplant"] = "true"
+	kube.AppendLabel(svc.ObjectMeta, "supplant", "true")
+
 	log.Printf("updating service %s", svc.Name)
 	_, err = clientset.CoreV1().Services(*namespace).Update(ctx, svc, metav1.UpdateOptions{})
 	if err != nil {
@@ -160,27 +117,42 @@ func main() {
 		log.Fatalf("error deleting endpoint %s", serviceName)
 	}
 
-	ep := &v1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: serviceName,
-			Labels: map[string]string{
-				"supplant": "true",
-			},
-		},
-		Subsets: []v1.EndpointSubset{
-			{
-				Addresses: []v1.EndpointAddress{
-					{
-						IP: *ip,
-					},
-				},
-			},
-		},
-	}
+	ep := kube.NewEndpoint(serviceName, *ip)
+	kube.AppendLabel(ep.ObjectMeta, "supplant", "true")
+
 	for _, port := range ports {
 		ep.Subsets[0].Ports = append(ep.Subsets[0].Ports, v1.EndpointPort{
-			Port: int32(port.listenPort),
+			Port: port.listenPort,
 		})
 	}
-	endpoints.Create(ctx, ep, metav1.CreateOptions{})
+	_, err = endpoints.Create(ctx, ep, metav1.CreateOptions{})
+	if err != nil {
+		log.Fatalf("error creating endpoint %s: %s", serviceName, err)
+	}
+
+	log.Println("creating port forwards")
+	var portForwards []*portforward.PortForwarder
+	for _, forwardSvc := range []string{"foobar"} {
+		fw, err := kube.PortForward(clientset, *namespace, fmt.Sprintf("service/%s", forwardSvc))
+		if err != nil {
+			log.Fatalf("error finding pod for %s", serviceName)
+		}
+		portForwards = append(portForwards, fw)
+	}
+
+	// wait for all of the port forwards to be ready
+	for _, fw := range portForwards {
+		<-fw.Ready
+	}
+
+	log.Println("hit Ctrl+C to exit")
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt)
+
+	<-signals
+	log.Printf("exiting...")
+	for _, fw := range portForwards {
+		fw.Close()
+	}
+
 }
