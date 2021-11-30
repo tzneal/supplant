@@ -4,20 +4,23 @@
 
 `supplant` is a tool used for improve the development experience with Kubernetes. The concept is to start with a 
 working cluster with all of the deployed services in your application and then to supplant or 
-replace a service by replacing the K8s service by a new service without a selector and creating an endpoint
+replace a service using a new service without a selector and creating an endpoint
 that points to your local machine.  The end result is that from within the cluster, the service now points to a port
-on your machine outside the cluster.  To allow the service are developing that exists outside the cluster
-to reach any dependent services inside the cluster, those services are exposed individually via port forwarding
+on your machine outside the cluster.  To allow the code that you are developing/running outside the cluster
+to reach any dependent services inside the cluster, those services are exposed individually via port forwarding.
 
 
 ![supplant Diagram](./.images/supplant-diagram.png)
 
 ## Why?
 - Pushing new images to test a change works, but the code/test cycle is very slow
-- It's convenient to run all of your existing tooling including running the service under a debugger on your machine
+- It's very convenient to run all of your existing tooling including running the service under a debugger on your machine
+- It uses standard K8s port forwarding and endpoints as the implementation which will hopefully be fairly reliable
+
+## Why not?
 - [Telepresence](https://github.com/telepresenceio/telepresence) is another more seamless approach at doing this, but 
  it has to use a bit of networking magic to make it happen and I've had a few reliability issues with it.  
-
+- If your cluster can't reach back your local machine, this won't work.
 
 ## Installation
 
@@ -31,7 +34,7 @@ go install github.com/tzneal/supplant@latest
 ## Production Use
 
 Please don't run this against a production cluster.  It attempts to replace services/endpoints and then return them
-upon exist, but this hasn't undergone extensive testing.
+upon exit, but this hasn't undergone extensive testing. I use this with [kind](https://kind.sigs.k8s.io/) locally.
 
 ## Sample Usage
 
@@ -86,8 +89,8 @@ external:
 ```
 
 We want to replace the `hello-1` service, but have our replacement be able to access the `hello-2` service.  So we enable
-those two, and then clean our config file which removes the disabled services which are the services we will not be replacing
-or providing port forwarding to.
+`hello-1` in the supplant section and `hello-2` in the external section.  We can then then clean our config file which removes 
+any disabled services from the config file.
 
 ```bash
 $ ./supplant config clean test.yml
@@ -126,7 +129,7 @@ $ supplant test.yml
 forwarding ports, hit Ctrl+C to exit
 ```
 
-It lets us know that from within our cluster, anything trying to reach the hello-1 service will connect to 192.168.88.128:8080.  `supplant` has also
+The log lets us know that from within our cluster, anything trying to reach the hello-1 service will connect to 192.168.88.128:8080.  `supplant` has also
 forwarded our local port 38989 to the hello-2 service at `hello-2:8080`. We can verify tat we have replaced the hello-1 service  by trying to reach
 it from the hello-2 pod which fails as we haven't started anything listening on port 8080 yet.
 
