@@ -19,9 +19,19 @@ to reach any dependent services inside the cluster, those services are exposed i
  it has to use a bit of networking magic to make it happen and I've had a few reliability issues with it.  
 
 
+## Installation
+
+Binaries are available for [releases](https://github.com/tzneal/supplant/releases), or you can install directly using 
+go with:
+
+```bash
+go install github.com/tzneal/supplant@latest
+```
+
 ## Production Use
 
-Please don't run this against a production cluster.  It attempts to replace and un-replace 
+Please don't run this against a production cluster.  It attempts to replace services/endpoints and then return them
+upon exist, but this hasn't undergone extensive testing.
 
 ## Sample Usage
 
