@@ -30,7 +30,7 @@ to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		inputFile := args[0]
 
-		printHeader("connecting to kubernetes")
+		printHeader("connecting to K8s")
 		f := cmdutil.NewFactory(kubeConfigFlags)
 		cs, err := f.KubernetesClientSet()
 		if err != nil {
@@ -41,7 +41,7 @@ to quickly create a Cobra application.`,
 		if err != nil {
 			log.Fatalf("error getting kubernetes version: %s", err)
 		}
-		printHeader("version: %s", ver.String())
+		printHeader("K8s version: %s", ver.String())
 
 		ctx := context.Background()
 		type svcKey struct {
@@ -60,11 +60,12 @@ to quickly create a Cobra application.`,
 			svcMap[key] = svc
 		}
 
+		supplantingAtLeastOne := false
 		var serviceBackups []*v1.Service
 		cfg := readConfig(inputFile)
 		for _, supplantSvc := range cfg.Supplant {
 			if !supplantSvc.Enabled {
-				printWarn("skipping disabled service {}", supplantSvc.Name)
+				printWarn("skipping disabled supplanted service %s", supplantSvc.Name)
 				continue
 			}
 			key := svcKey{supplantSvc.Namespace, supplantSvc.Name}
@@ -82,6 +83,7 @@ to quickly create a Cobra application.`,
 				svcPorts[port.Port] = port
 			}
 
+			// ensure that we are covering all of the ports
 			for _, port := range supplantSvc.Ports {
 				_, match := svcPorts[port.Port]
 				if !match {
@@ -89,7 +91,12 @@ to quickly create a Cobra application.`,
 				}
 			}
 
+			if svc.Spec.Selector == nil || len(svc.Spec.Selector) == 0 {
+				log.Fatalf("attempted to supplant a service with no selectors")
+			}
+
 			// clear the selector and ports
+			svc.ObjectMeta.Labels = nil
 			svc.Spec.Selector = nil
 			svc.Spec.Ports = nil
 
@@ -110,17 +117,30 @@ to quickly create a Cobra application.`,
 			}
 			appendLabel(&svc.ObjectMeta, "supplant", "true")
 
-			_, err = cs.CoreV1().Services(svc.Namespace).Update(ctx, &svc, metav1.UpdateOptions{})
+			// delete the existing service
+			err = cs.CoreV1().Services(svc.Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{})
+			if err != nil && !errors.IsNotFound(err){
+				log.Fatalf("error deleting existing service %s: %s", svc.Name, err)
+			}
+
+			// Prepare to recreate a new service without a selector.  I attempted to just remove the selector
+			// on the existing service, which somewhat worked but it would then load-balance across the existing service
+			// and our replacement.  Removing the service and
+			prepareServiceForCreation(&svc)
+
+			_, err = cs.CoreV1().Services(svc.Namespace).Create(ctx, &svc, metav1.CreateOptions{})
 			if err != nil {
 				log.Fatalf("error updating service %s: %s", svc.Name, err)
 			}
 
+			// delete the existing endpoint
 			endpoints := cs.CoreV1().Endpoints(svc.Namespace)
 			err = endpoints.Delete(ctx, svc.Name, metav1.DeleteOptions{})
 			if err != nil && !errors.IsNotFound(err) {
 				log.Fatalf("error deleting endpoint %s", svc.Name)
 			}
 
+			// and prepare to create our own that points back to our local IP address
 			ep := &v1.Endpoints{
 				ObjectMeta: metav1.ObjectMeta{Name: svc.Name},
 				Subsets: []v1.EndpointSubset{{
@@ -134,22 +154,26 @@ to quickly create a Cobra application.`,
 			for _, port := range supplantSvc.Ports {
 				ep.Subsets[0].Ports = append(ep.Subsets[0].Ports, v1.EndpointPort{
 					Port: port.ListenPort,
+					Name: port.Name,
 				})
 			}
 			_, err = endpoints.Create(ctx, ep, metav1.CreateOptions{})
 			if err != nil {
 				log.Fatalf("error creating endpoint %s: %s", svc.Name, err)
 			}
+			supplantingAtLeastOne = true
 		}
 
 		localIp, err := cmd.Flags().GetIP("localip")
 		if err != nil {
 			log.Fatalf("error determining listen ip: %s", err)
 		}
+
+		portForwardingAtLeastOne := false
 		var portForwards []kube.PortForwarder
 		for _, externalSvc := range cfg.External {
 			if !externalSvc.Enabled {
-				printWarn("skipping disabled service {}", externalSvc.Name)
+				printWarn("skipping disabled external service %s", externalSvc.Name)
 				continue
 			}
 			for _, port := range externalSvc.Ports {
@@ -159,6 +183,13 @@ to quickly create a Cobra application.`,
 				}
 				portForwards = append(portForwards, fw)
 			}
+			portForwardingAtLeastOne = true
+		}
+
+
+		if !supplantingAtLeastOne && !portForwardingAtLeastOne {
+			printError("no services configured for supplanting or port forwarding, exiting...")
+			os.Exit(0)
 		}
 		// wait for all of the port forwards to be ready
 		for _, fw := range portForwards {
@@ -173,17 +204,23 @@ to quickly create a Cobra application.`,
 			}
 		}
 
+		// we've now replaced the services and are forwarding the requested ports. Wait for the user to hit Ctrl+C
+		// so we can undo all of our changes
 		printInfo("forwarding ports, hit Ctrl+C to exit")
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, os.Interrupt)
 
+		// wait on the Ctrl+C
 		<-signals
+
+
 		printHeader("cleaning up....")
 		for _, fw := range portForwards {
 			printList("closing port forward %s:%d", fw.Name, fw.Port)
 			fw.Forwarder.Close()
 		}
 
+		// deleter our endpoints
 		lo := metav1.ListOptions{
 			LabelSelector: "supplant=true",
 		}
@@ -200,23 +237,33 @@ to quickly create a Cobra application.`,
 			}
 		}
 
+
+		// and replace our services which will re-create the endpoints based on the selectors
 		for _, sb := range serviceBackups {
 			printList("restoring service %s", sb.Name)
-			currentSvc, err := cs.CoreV1().Services(sb.Namespace).Get(ctx, sb.Name, metav1.GetOptions{})
-
-			// should just need to restore the selector and ports
-			currentSvc.Spec.Selector = sb.Spec.Selector
-			currentSvc.Spec.Ports = sb.Spec.Ports
-			if currentSvc.ObjectMeta.Labels != nil {
-				delete(currentSvc.ObjectMeta.Labels, "supplant")
+			err = cs.CoreV1().Services(sb.Namespace).Delete(ctx, sb.Name, metav1.DeleteOptions{})
+			if err != nil {
+				log.Fatalf("error deleting existing service %s: %s", sb.Name, err)
 			}
-			_, err = cs.CoreV1().Services(sb.Namespace).Update(ctx, currentSvc, metav1.UpdateOptions{})
+
+			prepareServiceForCreation(sb)
+			_, err = cs.CoreV1().Services(sb.Namespace).Create(ctx, sb, metav1.CreateOptions{})
 
 			if err != nil {
 				printError("error restoring %s: err", sb.Name, err)
 			}
 		}
 	},
+}
+
+// prepareServiceForCreation clears out the properties on a service retrieved from K8s so we can use it
+// to recreate a new service
+func prepareServiceForCreation(svc *v1.Service) {
+	svc.ResourceVersion = ""
+	svc.UID = ""
+	svc.Spec.ClusterIPs = nil
+	svc.Spec.ClusterIP = ""
+	svc.ObjectMeta.CreationTimestamp = metav1.Time{}
 }
 
 func init() {

@@ -13,8 +13,8 @@ type Config struct {
 }
 
 type SupplantService struct {
-	Namespace string
 	Name      string
+	Namespace string
 	Enabled   bool
 	Ports     []SupplantPortConfig
 }
@@ -26,8 +26,8 @@ type SupplantPortConfig struct {
 }
 
 type ExternalService struct {
-	Namespace string
 	Name      string
+	Namespace string
 	Enabled   bool
 	Ports     []ExternalPortConfig
 }

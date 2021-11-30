@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tzneal/supplant/model"
 	"gopkg.in/yaml.v2"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 )
@@ -33,13 +34,28 @@ easy construction of the configuration.`,
 			log.Fatalf("error listing services: %s", err)
 		}
 		cfg := model.Config{}
+		includeAll,_ := cmd.Flags().GetBool("all")
 		for _, svc := range svcList.Items {
+			// skip kube-system services by default
+			if skipByDefault(svc) && !includeAll {
+				continue
+			}
 			cfg.Supplant = append(cfg.Supplant, model.MapSupplantService(svc))
 			cfg.External = append(cfg.External, model.MapExternalService(svc))
 		}
 
 		writeConfig(cfg, args[0])
 	},
+}
+
+func skipByDefault(svc v1.Service) bool {
+	if svc.Namespace =="kube-system" {
+		return true
+	}
+	if svc.Namespace == "default" && svc.Name == "kubernetes" {
+		return true
+	}
+	return false
 }
 
 func writeConfig(cfg model.Config, outputFile string) {
@@ -56,4 +72,5 @@ func writeConfig(cfg model.Config, outputFile string) {
 
 func init() {
 	configCmd.AddCommand(createCmd)
+	createCmd.Flags().BoolP("all","A",false,"If true, include items in the kube-system namespace")
 }
