@@ -18,14 +18,11 @@ import (
 
 // runCmd represents the run command
 var runCmd = &cobra.Command{
-	Use:   "run",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Use:   "run [flags] config.yml",
+	Short: "run launches a configuration",
+	Long: `run launches a configuration, pointing services to local ports
+on your machine and forwarding local ports to services
+inside the cluster as described by the configuration file.`,
 	Args: cobra.ExactValidArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		inputFile := args[0]
@@ -119,7 +116,7 @@ to quickly create a Cobra application.`,
 
 			// delete the existing service
 			err = cs.CoreV1().Services(svc.Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{})
-			if err != nil && !errors.IsNotFound(err){
+			if err != nil && !errors.IsNotFound(err) {
 				log.Fatalf("error deleting existing service %s: %s", svc.Name, err)
 			}
 
@@ -186,7 +183,6 @@ to quickly create a Cobra application.`,
 			portForwardingAtLeastOne = true
 		}
 
-
 		if !supplantingAtLeastOne && !portForwardingAtLeastOne {
 			printError("no services configured for supplanting or port forwarding, exiting...")
 			os.Exit(0)
@@ -213,7 +209,6 @@ to quickly create a Cobra application.`,
 		// wait on the Ctrl+C
 		<-signals
 
-
 		printHeader("cleaning up....")
 		for _, fw := range portForwards {
 			printList("closing port forward %s:%d", fw.Name, fw.Port)
@@ -236,7 +231,6 @@ to quickly create a Cobra application.`,
 				}
 			}
 		}
-
 
 		// and replace our services which will re-create the endpoints based on the selectors
 		for _, sb := range serviceBackups {

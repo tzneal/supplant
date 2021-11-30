@@ -11,7 +11,7 @@ import (
 
 // cleanCmd represents the clean command
 var cleanCmd = &cobra.Command{
-	Use:   "clean",
+	Use:   "clean [flags] config.yml",
 	Short: "clean removes all disabled items from a configuration file",
 	Long: `clean removes all disabled items.  The standard workflow
 is to use the 'create' commnad to construct a new configuration file

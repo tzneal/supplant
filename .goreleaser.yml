@@ -11,6 +11,8 @@ builds:
       - linux
       - windows
       - darwin
+    ldflags:
+    - -s -w -X github.com/tzneal/supplant/cmd.version={{.Version}} -X github.com/tzneal/supplant/cmd.commit={{.Commit}} -X github.com/tzneal/supplant/cmd.date={{.Date}}
 archives:
   - replacements:
       darwin: Darwin

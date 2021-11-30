@@ -15,7 +15,7 @@ import (
 
 // createCmd represents the create command
 var createCmd = &cobra.Command{
-	Use:   "create",
+	Use:   "create [flags] config.yml",
 	Short: "create constructs a configuration file based on the cluster",
 	Long: `create constructs a configuration file by looking at the services
 in the cluster.  This is intended to provide a template to allow 
@@ -34,7 +34,7 @@ easy construction of the configuration.`,
 			log.Fatalf("error listing services: %s", err)
 		}
 		cfg := model.Config{}
-		includeAll,_ := cmd.Flags().GetBool("all")
+		includeAll, _ := cmd.Flags().GetBool("all")
 		for _, svc := range svcList.Items {
 			// skip kube-system services by default
 			if skipByDefault(svc) && !includeAll {
@@ -49,7 +49,7 @@ easy construction of the configuration.`,
 }
 
 func skipByDefault(svc v1.Service) bool {
-	if svc.Namespace =="kube-system" {
+	if svc.Namespace == "kube-system" {
 		return true
 	}
 	if svc.Namespace == "default" && svc.Name == "kubernetes" {
@@ -72,5 +72,5 @@ func writeConfig(cfg model.Config, outputFile string) {
 
 func init() {
 	configCmd.AddCommand(createCmd)
-	createCmd.Flags().BoolP("all","A",false,"If true, include items in the kube-system namespace")
+	createCmd.Flags().BoolP("all", "A", false, "If true, include items in the kube-system namespace")
 }

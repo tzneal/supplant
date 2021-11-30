@@ -1,21 +1,27 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
 
+var (
+	version = "dev"
+	date    = "unknown"
+)
+
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "supplant",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Short: "supplant replaces services in a K8s cluster",
+	Long: `supplant is used to replace a service in a K8s cluster
+and point this service at your local machine. This allows
+you to develop/debug a service locally and let it interact
+with the rest of the services in a cluster.`,
+	Version: version,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -31,4 +37,6 @@ func init() {
 	pflag.CommandLine = flags
 	flags.AddFlagSet(rootCmd.PersistentFlags())
 	kubeConfigFlags.AddFlags(flags)
+
+	rootCmd.SetVersionTemplate(fmt.Sprintf("supplant version {{.Version}} / %s\n", date))
 }
