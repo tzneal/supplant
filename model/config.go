@@ -1,10 +1,15 @@
 package model
 
 import (
+	"context"
+	"fmt"
 	"log"
 
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
 )
 
 type Config struct {
@@ -38,7 +43,19 @@ type ExternalPortConfig struct {
 	LocalPort  int32
 }
 
-func MapSupplantService(svc v1.Service) SupplantService {
+type PortLookup struct {
+	cs    *kubernetes.Clientset
+	cache map[string]int32
+}
+
+func NewPortLookup(cs *kubernetes.Clientset) *PortLookup {
+	return &PortLookup{
+		cs:    cs,
+		cache: make(map[string]int32),
+	}
+}
+
+func MapSupplantService(pl *PortLookup, svc v1.Service) SupplantService {
 	ret := SupplantService{
 		Name:      svc.Name,
 		Namespace: svc.Namespace,
@@ -49,13 +66,13 @@ func MapSupplantService(svc v1.Service) SupplantService {
 			Name:       port.Name,
 			Port:       port.Port,
 			Protocol:   port.Protocol,
-			ListenPort: decodePort(port.TargetPort),
+			ListenPort: pl.decodePort(svc, port.TargetPort),
 		})
 	}
 	return ret
 }
 
-func MapExternalService(svc v1.Service) ExternalService {
+func MapExternalService(pl *PortLookup, svc v1.Service) ExternalService {
 	ret := ExternalService{
 		Name:      svc.Name,
 		Namespace: svc.Namespace,
@@ -64,7 +81,7 @@ func MapExternalService(svc v1.Service) ExternalService {
 	for _, port := range svc.Spec.Ports {
 		ret.Ports = append(ret.Ports, ExternalPortConfig{
 			Name:       port.Name,
-			TargetPort: decodePort(port.TargetPort),
+			TargetPort: pl.decodePort(svc, port.TargetPort),
 			Protocol:   port.Protocol,
 			LocalPort:  0,
 		})
@@ -72,10 +89,35 @@ func MapExternalService(svc v1.Service) ExternalService {
 	return ret
 }
 
-func decodePort(port intstr.IntOrString) int32 {
+func (pl *PortLookup) decodePort(svc v1.Service, port intstr.IntOrString) int32 {
 	if port.Type == intstr.Int {
 		return port.IntVal
 	}
-	log.Fatalf("TODO: support parsing port names")
+	key := fmt.Sprintf("%s/%s", svc.Namespace, svc.Name)
+	if port, ok := pl.cache[key]; ok {
+		return port
+	}
+
+	ctx := context.Background()
+	listOpts := metav1.ListOptions{
+		LabelSelector: labels.FormatLabels(svc.Spec.Selector),
+	}
+
+	pods, err := pl.cs.CoreV1().Pods("").List(ctx, listOpts)
+	if err != nil {
+		log.Fatalf("error looking up named port %s: %s", port.StrVal, err)
+	}
+	for _, pod := range pods.Items {
+		for _, container := range pod.Spec.Containers {
+			for _, cport := range container.Ports {
+				if cport.Name == port.StrVal {
+					pl.cache[key] = cport.ContainerPort
+					return cport.ContainerPort
+				}
+			}
+		}
+	}
+
+	log.Fatalf("unable to find named port %s for service %s", port.StrVal, svc.Name)
 	return -1
 }

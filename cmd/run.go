@@ -62,7 +62,6 @@ inside the cluster as described by the configuration file.`,
 		cfg := readConfig(inputFile)
 		for _, supplantSvc := range cfg.Supplant {
 			if !supplantSvc.Enabled {
-				printWarn("skipping disabled supplanted service %s", supplantSvc.Name)
 				continue
 			}
 			key := svcKey{supplantSvc.Namespace, supplantSvc.Name}
@@ -112,7 +111,7 @@ inside the cluster as described by the configuration file.`,
 				svc.Spec.Ports = append(svc.Spec.Ports, newPort)
 				printList("%s:%d is now the endpoint for %s:%d", ip, port.ListenPort, supplantSvc.Name, port.Port)
 			}
-			appendLabel(&svc.ObjectMeta, "supplant", "true")
+			appendAnnotation(&svc.ObjectMeta, "supplant", "true")
 
 			// delete the existing service
 			err = cs.CoreV1().Services(svc.Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{})
@@ -132,6 +131,7 @@ inside the cluster as described by the configuration file.`,
 
 			// delete the existing endpoint
 			endpoints := cs.CoreV1().Endpoints(svc.Namespace)
+
 			err = endpoints.Delete(ctx, svc.Name, metav1.DeleteOptions{})
 			if err != nil && !errors.IsNotFound(err) {
 				log.Fatalf("error deleting endpoint %s", svc.Name)
@@ -146,12 +146,11 @@ inside the cluster as described by the configuration file.`,
 					}}}},
 			}
 
-			appendLabel(&ep.ObjectMeta, "supplant", "true")
+			appendAnnotation(&ep.ObjectMeta, "supplant", "true")
 
 			for _, port := range supplantSvc.Ports {
 				ep.Subsets[0].Ports = append(ep.Subsets[0].Ports, v1.EndpointPort{
 					Port: port.ListenPort,
-					Name: port.Name,
 				})
 			}
 			_, err = endpoints.Create(ctx, ep, metav1.CreateOptions{})
@@ -170,7 +169,6 @@ inside the cluster as described by the configuration file.`,
 		var portForwards []kube.PortForwarder
 		for _, externalSvc := range cfg.External {
 			if !externalSvc.Enabled {
-				printWarn("skipping disabled external service %s", externalSvc.Name)
 				continue
 			}
 			for _, port := range externalSvc.Ports {
@@ -282,9 +280,9 @@ func getOutboundIP() (net.IP, error) {
 	return localAddr.IP, nil
 }
 
-func appendLabel(meta *metav1.ObjectMeta, key string, value string) {
-	if meta.Labels == nil {
-		meta.Labels = map[string]string{}
+func appendAnnotation(meta *metav1.ObjectMeta, key string, value string) {
+	if meta.Annotations == nil {
+		meta.Annotations = map[string]string{}
 	}
-	meta.Labels[key] = value
+	meta.Annotations[key] = value
 }

@@ -35,13 +35,14 @@ easy construction of the configuration.`,
 		}
 		cfg := model.Config{}
 		includeAll, _ := cmd.Flags().GetBool("all")
+		pl := model.NewPortLookup(cs)
 		for _, svc := range svcList.Items {
 			// skip kube-system services by default
 			if skipByDefault(svc) && !includeAll {
 				continue
 			}
-			cfg.Supplant = append(cfg.Supplant, model.MapSupplantService(svc))
-			cfg.External = append(cfg.External, model.MapExternalService(svc))
+			cfg.Supplant = append(cfg.Supplant, model.MapSupplantService(pl, svc))
+			cfg.External = append(cfg.External, model.MapExternalService(pl, svc))
 		}
 
 		writeConfig(cfg, args[0])
