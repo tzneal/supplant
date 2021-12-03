@@ -11,16 +11,16 @@ builds:
       - linux
       - windows
       - darwin
+    goarch:
+      - amd64
+      - arm64
     ldflags:
     - -s -w -X github.com/tzneal/supplant/cmd.version={{.Version}} -X github.com/tzneal/supplant/cmd.commit={{.Commit}} -X github.com/tzneal/supplant/cmd.date={{.Date}}
 archives:
   - replacements:
-      darwin: Darwin
-      linux: Linux
-      windows: Windows
-      386: i386
       amd64: x86_64
     format: binary
+    name_template: '{{ .Binary }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{.Arm }}{{ end }}{{ if .Mips }}_{{ .Mips }}{{ end }}'
 checksum:
   name_template: 'checksums.txt'
 snapshot:
