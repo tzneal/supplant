@@ -27,6 +27,3 @@ func printInfo(format string, a ...interface{}) {
 func printError(format string, a ...interface{}) {
 	color.Red("ERROR "+format, a...)
 }
-func printWarn(format string, a ...interface{}) {
-	color.Yellow("WARN  "+format, a...)
-}
