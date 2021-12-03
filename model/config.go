@@ -24,10 +24,10 @@ type SupplantService struct {
 	Ports     []SupplantPortConfig
 }
 type SupplantPortConfig struct {
-	Name       string `yaml:"name,omitempty"`
-	Protocol   v1.Protocol
-	Port       int32
-	ListenPort int32
+	Name      string `yaml:"name,omitempty"`
+	Protocol  v1.Protocol
+	Port      int32
+	LocalPort int32
 }
 
 type ExternalService struct {
@@ -63,10 +63,10 @@ func MapSupplantService(pl *PortLookup, svc v1.Service) SupplantService {
 	}
 	for _, port := range svc.Spec.Ports {
 		ret.Ports = append(ret.Ports, SupplantPortConfig{
-			Name:       port.Name,
-			Port:       port.Port,
-			Protocol:   port.Protocol,
-			ListenPort: pl.decodePort(svc, port.TargetPort),
+			Name:      port.Name,
+			Port:      port.Port,
+			Protocol:  port.Protocol,
+			LocalPort: 0,
 		})
 	}
 	return ret
