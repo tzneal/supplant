@@ -106,10 +106,10 @@ inside the cluster as described by the configuration file.`,
 			for _, port := range supplantSvc.Ports {
 				var newPort v1.ServicePort
 				newPort.Port = port.Port
-				newPort.TargetPort = intstr.FromInt(int(port.ListenPort))
+				newPort.TargetPort = intstr.FromInt(int(port.LocalPort))
 				newPort.Protocol = svcPorts[port.Port].Protocol
 				svc.Spec.Ports = append(svc.Spec.Ports, newPort)
-				printList("%s:%d is now the endpoint for %s:%d", ip, port.ListenPort, supplantSvc.Name, port.Port)
+				printList("%s:%d is now the endpoint for %s:%d", ip, port.LocalPort, supplantSvc.Name, port.Port)
 			}
 			appendAnnotation(&svc.ObjectMeta, "supplant", "true")
 
@@ -150,7 +150,7 @@ inside the cluster as described by the configuration file.`,
 
 			for _, port := range supplantSvc.Ports {
 				ep.Subsets[0].Ports = append(ep.Subsets[0].Ports, v1.EndpointPort{
-					Port: port.ListenPort,
+					Port: port.LocalPort,
 				})
 			}
 			_, err = endpoints.Create(ctx, ep, metav1.CreateOptions{})
