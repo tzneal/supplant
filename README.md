@@ -24,8 +24,16 @@ to reach any dependent services inside the cluster, those services are exposed i
 
 ## Installation
 
-Binaries are available for [releases](https://github.com/tzneal/supplant/releases), or you can install directly using 
-go with:
+Binaries are available for [releases](https://github.com/tzneal/supplant/releases).
+
+For Linux x64 you can install the latest release globally with:
+```bash
+sudo curl -sL https://github.com/tzneal/supplant/releases/latest/download/supplant_linux_x86_64 -o /usr/local/bin/supplant
+
+sudo chmod a+x /usr/local/bin/supplant
+```
+
+Yyou can install directly using go with:
 
 ```bash
 go install github.com/tzneal/supplant@latest
