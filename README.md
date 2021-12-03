@@ -57,35 +57,35 @@ within the YAML file.
 
 ```yml
 supplant:
-- name: hello-1
-  namespace: default
-  enabled: false
-  ports:
-  - protocol: TCP
-    port: 80
-    listenport: 8080
-- name: hello-2
-  namespace: default
-  enabled: false
-  ports:
-  - protocol: TCP
-    port: 81
-    listenport: 8080
+ - name: hello-1
+   namespace: default
+   enabled: false
+   ports:
+    - protocol: TCP
+      port: 80
+      localport: 0
+ - name: hello-2
+   namespace: default
+   enabled: false
+   ports:
+    - protocol: TCP
+      port: 81
+      localport: 0
 external:
-- name: hello-1
-  namespace: default
-  enabled: false
-  ports:
-  - protocol: TCP
-    targetport: 8080
-    localport: 0
-- name: hello-2
-  namespace: default
-  enabled: false
-  ports:
-  - protocol: TCP
-    targetport: 8080
-    localport: 0
+ - name: hello-1
+   namespace: default
+   enabled: false
+   ports:
+    - protocol: TCP
+      targetport: 8080
+      localport: 0
+ - name: hello-2
+   namespace: default
+   enabled: false
+   ports:
+    - protocol: TCP
+      targetport: 8080
+      localport: 0
 ```
 
 We want to replace the `hello-1` service, but have our replacement be able to access the `hello-2` service.  So we enable
@@ -99,39 +99,41 @@ $ ./supplant config clean test.yml
 The test.yml now looks like this:
 ```yaml
 supplant:
-- name: hello-1
-  namespace: default
-  enabled: true
-  ports:
-  - protocol: TCP
-    port: 80
-    listenport: 8080
+ - name: hello-1
+   namespace: default
+   enabled: true
+   ports:
+    - protocol: TCP
+      port: 80
+      localport: 0
 external:
-- name: hello-2
-  namespace: default
-  enabled: true
-  ports:
-  - protocol: TCP
-    targetport: 8080
-    localport: 0
+ - name: hello-2
+   namespace: default
+   enabled: true
+   ports:
+    - protocol: TCP
+      targetport: 8080
+      localport: 0
 ```
 
 We can now run `supplant` on this configuration file:
 
 ```bash
-$ supplant test.yml
 => connecting to K8s
 => K8s version: v1.21.1
 => updating service hello-1
- - 192.168.88.128:8080 is now the endpoint for hello-1:80
+ - 192.168.1.129:40709 is now the endpoint for hello-1:80
 => forwarding for hello-2
- - 127.0.0.1:38989 points to remote hello-2:8080
+ - 127.0.0.1:43099 points to remote hello-2:8080
 forwarding ports, hit Ctrl+C to exit
 ```
 
-The log lets us know that from within our cluster, anything trying to reach the hello-1 service will connect to 192.168.88.128:8080.  `supplant` has also
-forwarded our local port 38989 to the hello-2 service at `hello-2:8080`. We can verify tat we have replaced the hello-1 service  by trying to reach
-it from the hello-2 pod which fails as we haven't started anything listening on port 8080 yet.
+The log lets us know that from within our cluster, anything trying to reach the hello-1 service will connect to 192.168.88.122:40709. 
+The port 40709 was chosen at random since the listen port was specified as 0.  If a non-zero port were specified, it would be used
+instead. `supplant` has also forwarded our local port 43099 to the hello-2 service at `hello-2:8080`. The listen port there works
+the same way where specifying a non-zero port in the config file will listen on the specified port instead of a random open port.
+We can verify that we have replaced the hello-1 service  by trying to reach it from the hello-2 pod which fails as we haven't
+started anything listening on port 8080 yet.
 
 ```bash
 $ kubectl exec -it deployment/hello-2 -- curl hello-1:80
@@ -141,8 +143,8 @@ command terminated with exit code 7
 
 If we start a web server locally on port 8080, the connection will then work. In a separate shell we start a web server:
 ```bash
-$ python3 -m http.server 8080                           
-Serving HTTP on 0.0.0.0 port 8080 (http://0.0.0.0:8080/) ...
+$ python3 -m http.server 40709                           
+Serving HTTP on 0.0.0.0 port 40709 (http://0.0.0.0:40709/) ...
 ```
 
 And then retry the connection to the hello-1 service, which now hits our Python web server.
@@ -160,7 +162,7 @@ $  kubectl exec -it deployment/hello-2 -- curl hello-1:80
 Lastly, we can verify that the port forward works locally as we can reach the hello-2 service.  This allows our local 
 service to access any resources inside the cluster that it needs to.
 ```bash
-$ curl 127.0.0.1:38989
+$ curl 127.0.0.1:43099
 CLIENT VALUES:
 client_address=127.0.0.1
 command=GET

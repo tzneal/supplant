@@ -64,6 +64,20 @@ inside the cluster as described by the configuration file.`,
 			if !supplantSvc.Enabled {
 				continue
 			}
+
+			for i := range supplantSvc.Ports {
+				port := &supplantSvc.Ports[i]
+				// we need to choose a port for the user
+				if port.LocalPort == 0 {
+					listener, err := net.Listen("tcp", ":0")
+					if err != nil {
+						log.Fatalf("error choosing local port for service %s: %s", supplantSvc.Name, err)
+					}
+					port.LocalPort = int32(listener.Addr().(*net.TCPAddr).Port)
+					listener.Close()
+				}
+			}
+
 			key := svcKey{supplantSvc.Namespace, supplantSvc.Name}
 			svc, ok := svcMap[key]
 			if !ok {
