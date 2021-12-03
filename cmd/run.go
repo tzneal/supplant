@@ -248,13 +248,11 @@ inside the cluster as described by the configuration file.`,
 	},
 }
 
-// prepareServiceForCreation clears out the properties on a service retrieved from K8s so we can use it
-// to recreate a new service
+// prepareServiceForCreation clears out some the properties on a service retrieved from K8s so we can use it
+// to recreate a new service.  We retain the cluster IPs to hopefully provide minimal disruption.
 func prepareServiceForCreation(svc *v1.Service) {
 	svc.ResourceVersion = ""
 	svc.UID = ""
-	svc.Spec.ClusterIPs = nil
-	svc.Spec.ClusterIP = ""
 	svc.ObjectMeta.CreationTimestamp = metav1.Time{}
 }
 
