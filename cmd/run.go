@@ -125,9 +125,9 @@ inside the cluster as described by the configuration file.`,
 			svc.Spec.Selector = nil
 			svc.Spec.Ports = nil
 
-			ip, err := cmd.Flags().GetIP("ip")
+			ip, err := cmd.Flags().GetIP(flagExternalIP)
 			if err != nil {
-				util.LogError("error getting IP: %s", err)
+				util.LogError("error getting external IP: %s", err)
 				return
 			}
 
@@ -155,7 +155,7 @@ inside the cluster as described by the configuration file.`,
 
 			// Prepare to recreate a new service without a selector.  I attempted to just remove the selector
 			// on the existing service, which somewhat worked but it would then load-balance across the existing service
-			// and our replacement.  Removing the service and
+			// and our replacement.  Removing the service seems to make this more reliable.
 			prepareServiceForCreation(&svc)
 
 			_, err = cs.CoreV1().Services(svc.Namespace).Create(ctx, &svc, metav1.CreateOptions{})
@@ -197,7 +197,7 @@ inside the cluster as described by the configuration file.`,
 			supplantingAtLeastOne = true
 		}
 
-		localIp, err := cmd.Flags().GetIP("localip")
+		localIp, err := cmd.Flags().GetIP(flagLocalIP)
 		if err != nil {
 			util.LogError("error determining listen ip: %s", err)
 			return
@@ -304,6 +304,9 @@ func prepareServiceForCreation(svc *v1.Service) {
 	svc.ObjectMeta.CreationTimestamp = metav1.Time{}
 }
 
+const flagExternalIP = "externalip"
+const flagLocalIP = "localip"
+
 func init() {
 	rootCmd.AddCommand(runCmd)
 
@@ -311,8 +314,8 @@ func init() {
 	if err != nil {
 		ip = net.IP{}
 	}
-	runCmd.Flags().IP("ip", ip, "IP address that services within the cluster will connect to")
-	runCmd.Flags().IP("localip", net.IPv4(127, 0, 0, 1), "IP address that is used to listen")
+	runCmd.Flags().IP(flagExternalIP, ip, "IP address that services within the cluster will connect to")
+	runCmd.Flags().IP(flagLocalIP, net.IPv4(127, 0, 0, 1), "IP address that is used to listen")
 }
 
 func getOutboundIP() (net.IP, error) {

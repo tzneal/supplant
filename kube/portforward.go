@@ -2,11 +2,11 @@ package kube
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"time"
 
+	"github.com/tzneal/supplant/util"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/portforward"
@@ -23,8 +23,8 @@ type PortForwarder struct {
 	Forwarder *portforward.PortForwarder
 }
 
+// PortForward opens up a socket for the given local IP address and port and forwards it to the specified service and target port.
 func PortForward(f cmdutil.Factory, namespace string, svcName string, targetPort int32, localIP net.IP, localPort int32) (PortForwarder, error) {
-
 	builder := f.NewBuilder().WithScheme(scheme.Scheme, scheme.Scheme.PrioritizedVersionsAllGroups()...).
 		ContinueOnError().NamespaceParam(namespace)
 	builder.ResourceNames("pods", fmt.Sprintf("service/%s", svcName))
@@ -75,7 +75,7 @@ func PortForward(f cmdutil.Factory, namespace string, svcName string, targetPort
 	go func() {
 		err := fw.ForwardPorts()
 		if err != nil {
-			log.Printf("error forwarding ports for %s: %s", svcName, err)
+			util.LogError("error forwarding ports for %s: %s", svcName, err)
 		}
 	}()
 
