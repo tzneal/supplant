@@ -38,7 +38,7 @@ every exposed service and port.`,
 			util.LogError("error reading services: %s", err)
 			return
 		}
-		localIp, err := cmd.Flags().GetIP("localip")
+		localIp, err := cmd.Flags().GetIP(flagLocalIP)
 		if err != nil {
 			util.LogError("error determining listen ip: %s", err)
 			return
@@ -102,6 +102,6 @@ every exposed service and port.`,
 
 func init() {
 
-	exposeAllCmd.Flags().IP("localip", net.IPv4(127, 0, 0, 1), "IP address that is used to listen")
+	exposeAllCmd.Flags().IP(flagLocalIP, net.IPv4(127, 0, 0, 1), "IP address that is used to listen")
 	rootCmd.AddCommand(exposeAllCmd)
 }

@@ -36,7 +36,7 @@ easy construction of the configuration.`,
 			return
 		}
 		cfg := model.Config{}
-		includeAll, _ := cmd.Flags().GetBool("all")
+		includeAll, _ := cmd.Flags().GetBool(flagAll)
 		pl := model.NewPortLookup(cs)
 		for _, svc := range svcList.Items {
 			// skip kube-system services by default
@@ -75,7 +75,9 @@ func writeConfig(cfg model.Config, outputFile string) {
 	}
 }
 
+const flagAll = "all"
+
 func init() {
 	configCmd.AddCommand(createCmd)
-	createCmd.Flags().BoolP("all", "A", false, "If true, include items in the kube-system namespace")
+	createCmd.Flags().BoolP(flagAll, "A", false, "If true, include items in the kube-system namespace")
 }
