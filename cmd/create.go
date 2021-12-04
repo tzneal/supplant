@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"context"
-	"log"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/tzneal/supplant/model"
+	"github.com/tzneal/supplant/util"
 	"gopkg.in/yaml.v2"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,13 +25,15 @@ easy construction of the configuration.`,
 		f := cmdutil.NewFactory(kubeConfigFlags)
 		cs, err := f.KubernetesClientSet()
 		if err != nil {
-			log.Fatalf("error getting kubernetes client: %s", err)
+			util.LogError("error getting kubernetes client: %s", err)
+			return
 		}
 
 		ctx := context.Background()
 		svcList, err := cs.CoreV1().Services(*kubeConfigFlags.Namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			log.Fatalf("error listing services: %s", err)
+			util.LogError("error listing services: %s", err)
+			return
 		}
 		cfg := model.Config{}
 		includeAll, _ := cmd.Flags().GetBool("all")
@@ -62,12 +64,14 @@ func skipByDefault(svc v1.Service) bool {
 func writeConfig(cfg model.Config, outputFile string) {
 	fo, err := os.Create(outputFile)
 	if err != nil {
-		log.Fatalf("error opening %s: %s", outputFile, err)
+		util.LogError("error opening %s: %s", outputFile, err)
+		return
 	}
 	defer fo.Close()
 	enc := yaml.NewEncoder(fo)
 	if err = enc.Encode(cfg); err != nil {
-		log.Fatalf("error encoding config: %s", err)
+		util.LogError("error encoding config: %s", err)
+		return
 	}
 }
 

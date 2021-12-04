@@ -3,8 +3,8 @@ package model
 import (
 	"context"
 	"fmt"
-	"log"
 
+	"github.com/tzneal/supplant/util"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -62,6 +62,10 @@ func MapSupplantService(pl *PortLookup, svc v1.Service) SupplantService {
 		Enabled:   false,
 	}
 	for _, port := range svc.Spec.Ports {
+		// doesn't support UDP port forwarding yet see https://github.com/kubernetes/kubernetes/issues/47862
+		if port.Protocol != "TCP" {
+			continue
+		}
 		ret.Ports = append(ret.Ports, SupplantPortConfig{
 			Name:      port.Name,
 			Port:      port.Port,
@@ -79,9 +83,13 @@ func MapExternalService(pl *PortLookup, svc v1.Service) ExternalService {
 		Enabled:   false,
 	}
 	for _, port := range svc.Spec.Ports {
+		// doesn't support UDP port forwarding yet see https://github.com/kubernetes/kubernetes/issues/47862
+		if port.Protocol != "TCP" {
+			continue
+		}
 		ret.Ports = append(ret.Ports, ExternalPortConfig{
 			Name:       port.Name,
-			TargetPort: pl.decodePort(svc, port.TargetPort),
+			TargetPort: pl.LookupPort(svc, port.TargetPort),
 			Protocol:   port.Protocol,
 			LocalPort:  0,
 		})
@@ -89,7 +97,7 @@ func MapExternalService(pl *PortLookup, svc v1.Service) ExternalService {
 	return ret
 }
 
-func (pl *PortLookup) decodePort(svc v1.Service, port intstr.IntOrString) int32 {
+func (pl *PortLookup) LookupPort(svc v1.Service, port intstr.IntOrString) int32 {
 	if port.Type == intstr.Int {
 		return port.IntVal
 	}
@@ -105,7 +113,8 @@ func (pl *PortLookup) decodePort(svc v1.Service, port intstr.IntOrString) int32 
 
 	pods, err := pl.cs.CoreV1().Pods("").List(ctx, listOpts)
 	if err != nil {
-		log.Fatalf("error looking up named port %s: %s", port.StrVal, err)
+		util.LogError("error looking up named port %s: %s", port.StrVal, err)
+		return -1
 	}
 	for _, pod := range pods.Items {
 		for _, container := range pod.Spec.Containers {
@@ -118,6 +127,6 @@ func (pl *PortLookup) decodePort(svc v1.Service, port intstr.IntOrString) int32 
 		}
 	}
 
-	log.Fatalf("unable to find named port %s for service %s", port.StrVal, svc.Name)
+	util.LogError("unable to find named port %s for service %s", port.StrVal, svc.Name)
 	return -1
 }
