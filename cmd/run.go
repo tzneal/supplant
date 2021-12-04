@@ -2,17 +2,18 @@ package cmd
 
 import (
 	"context"
-	"log"
 	"net"
 	"os"
 	"os/signal"
 
 	"github.com/spf13/cobra"
 	"github.com/tzneal/supplant/kube"
+	"github.com/tzneal/supplant/util"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 )
 
@@ -27,19 +28,21 @@ inside the cluster as described by the configuration file.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		inputFile := args[0]
 
-		printHeader("connecting to K8s")
+		util.LogInfoHeader("connecting to K8s")
 		f := cmdutil.NewFactory(kubeConfigFlags)
 		cs, err := f.KubernetesClientSet()
 		if err != nil {
-			log.Fatalf("error getting kubernetes client: %s", err)
+			util.LogError("error getting kubernetes client: %s", err)
+			return
 		}
 
 		ver, err := cs.ServerVersion()
 		if err != nil {
-			log.Fatalf("error getting kubernetes version: %s", err)
+			util.LogError("error getting kubernetes version: %s", err)
+			return
 		}
-		printHeader("K8s version: %s", ver.String())
 
+		util.LogInfoHeader("K8s version: %s", ver.String())
 		ctx := context.Background()
 		type svcKey struct {
 			namespace string
@@ -50,16 +53,25 @@ inside the cluster as described by the configuration file.`,
 		svcMap := map[svcKey]v1.Service{}
 		svcList, err := cs.CoreV1().Services(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			log.Fatalf("error listing services: %s", err)
+			util.LogError("error listing services: %s", err)
+			return
 		}
+
 		for _, svc := range svcList.Items {
 			key := svcKey{svc.Namespace, svc.Name}
 			svcMap[key] = svc
 		}
 
 		supplantingAtLeastOne := false
-		var serviceBackups []*v1.Service
 		cfg := readConfig(inputFile)
+		if cfg == nil {
+			return
+		}
+
+		// defer the deletion of endpoints so we can try to ensure we always put things
+		// back like they were
+		defer deleteSupplantedEndpoints(cs)
+
 		for _, supplantSvc := range cfg.Supplant {
 			if !supplantSvc.Enabled {
 				continue
@@ -71,7 +83,8 @@ inside the cluster as described by the configuration file.`,
 				if port.LocalPort == 0 {
 					listener, err := net.Listen("tcp", ":0")
 					if err != nil {
-						log.Fatalf("error choosing local port for service %s: %s", supplantSvc.Name, err)
+						util.LogError("error choosing local port for service %s: %s", supplantSvc.Name, err)
+						return
 					}
 					port.LocalPort = int32(listener.Addr().(*net.TCPAddr).Port)
 					listener.Close()
@@ -81,12 +94,12 @@ inside the cluster as described by the configuration file.`,
 			key := svcKey{supplantSvc.Namespace, supplantSvc.Name}
 			svc, ok := svcMap[key]
 			if !ok {
-				log.Fatalf("unable to find service %s in namespace %s", supplantSvc.Name, supplantSvc.Namespace)
+				util.LogError("unable to find service %s in namespace %s", supplantSvc.Name, supplantSvc.Namespace)
 			}
 
-			// backup the services before we change them so we can replace them when
+			// backup the service before we change it so we can replace them it when
 			// exiting
-			serviceBackups = append(serviceBackups, svc.DeepCopy())
+			serviceBackup := svc.DeepCopy()
 
 			svcPorts := map[int32]v1.ServicePort{}
 			for _, port := range svc.Spec.Ports {
@@ -97,12 +110,14 @@ inside the cluster as described by the configuration file.`,
 			for _, port := range supplantSvc.Ports {
 				_, match := svcPorts[port.Port]
 				if !match {
-					log.Fatalf("no match found for port %d in service %s", port.Port, svc.Name)
+					util.LogError("no match found for port %d in service %s", port.Port, svc.Name)
+					return
 				}
 			}
 
 			if svc.Spec.Selector == nil || len(svc.Spec.Selector) == 0 {
-				log.Fatalf("attempted to supplant a service with no selectors")
+				util.LogError("attempted to supplant a service with no selectors")
+				return
 			}
 
 			// clear the selector and ports
@@ -112,10 +127,11 @@ inside the cluster as described by the configuration file.`,
 
 			ip, err := cmd.Flags().GetIP("ip")
 			if err != nil {
-				log.Fatalf("error getting IP: %s", err)
+				util.LogError("error getting IP: %s", err)
+				return
 			}
 
-			printHeader("updating service %s", svc.Name)
+			util.LogInfoHeader("updating service %s", svc.Name)
 			// and specify our new port mappings
 			for _, port := range supplantSvc.Ports {
 				var newPort v1.ServicePort
@@ -123,15 +139,19 @@ inside the cluster as described by the configuration file.`,
 				newPort.TargetPort = intstr.FromInt(int(port.LocalPort))
 				newPort.Protocol = svcPorts[port.Port].Protocol
 				svc.Spec.Ports = append(svc.Spec.Ports, newPort)
-				printList("%s:%d is now the endpoint for %s:%d", ip, port.LocalPort, supplantSvc.Name, port.Port)
+				util.LogInfoListItem("%s:%d is now the endpoint for %s:%d", ip, port.LocalPort, supplantSvc.Name, port.Port)
 			}
 			appendAnnotation(&svc.ObjectMeta, "supplant", "true")
 
 			// delete the existing service
 			err = cs.CoreV1().Services(svc.Namespace).Delete(ctx, svc.Name, metav1.DeleteOptions{})
 			if err != nil && !errors.IsNotFound(err) {
-				log.Fatalf("error deleting existing service %s: %s", svc.Name, err)
+				util.LogError("error deleting existing service %s: %s", svc.Name, err)
+				return
 			}
+
+			// always try to restore the service
+			defer restoreService(cs, serviceBackup)
 
 			// Prepare to recreate a new service without a selector.  I attempted to just remove the selector
 			// on the existing service, which somewhat worked but it would then load-balance across the existing service
@@ -140,7 +160,8 @@ inside the cluster as described by the configuration file.`,
 
 			_, err = cs.CoreV1().Services(svc.Namespace).Create(ctx, &svc, metav1.CreateOptions{})
 			if err != nil {
-				log.Fatalf("error updating service %s: %s", svc.Name, err)
+				util.LogError("error updating service %s: %s", svc.Name, err)
+				return
 			}
 
 			// delete the existing endpoint
@@ -148,7 +169,8 @@ inside the cluster as described by the configuration file.`,
 
 			err = endpoints.Delete(ctx, svc.Name, metav1.DeleteOptions{})
 			if err != nil && !errors.IsNotFound(err) {
-				log.Fatalf("error deleting endpoint %s", svc.Name)
+				util.LogError("error deleting endpoint %s", svc.Name)
+				return
 			}
 
 			// and prepare to create our own that points back to our local IP address
@@ -169,14 +191,16 @@ inside the cluster as described by the configuration file.`,
 			}
 			_, err = endpoints.Create(ctx, ep, metav1.CreateOptions{})
 			if err != nil {
-				log.Fatalf("error creating endpoint %s: %s", svc.Name, err)
+				util.LogError("error creating endpoint %s: %s", svc.Name, err)
+				return
 			}
 			supplantingAtLeastOne = true
 		}
 
 		localIp, err := cmd.Flags().GetIP("localip")
 		if err != nil {
-			log.Fatalf("error determining listen ip: %s", err)
+			util.LogError("error determining listen ip: %s", err)
+			return
 		}
 
 		portForwardingAtLeastOne := false
@@ -188,78 +212,88 @@ inside the cluster as described by the configuration file.`,
 			for _, port := range externalSvc.Ports {
 				fw, err := kube.PortForward(f, externalSvc.Namespace, externalSvc.Name, port.TargetPort, localIp, port.LocalPort)
 				if err != nil {
-					log.Fatalf("error forwarding port for %s: %s", externalSvc.Name, err)
+					util.LogError("error forwarding port for %s: %s", externalSvc.Name, err)
+					return
 				}
+				// ensure we close it
+				defer closePortForward(fw)
 				portForwards = append(portForwards, fw)
 			}
 			portForwardingAtLeastOne = true
 		}
 
 		if !supplantingAtLeastOne && !portForwardingAtLeastOne {
-			printError("no services configured for supplanting or port forwarding, exiting...")
-			os.Exit(0)
+			util.LogError("no services configured for supplanting or port forwarding, exiting...")
+			return
 		}
 		// wait for all of the port forwards to be ready
 		for _, fw := range portForwards {
 			<-fw.Forwarder.Ready
-			printHeader("forwarding for %s", fw.Name)
+			util.LogInfoHeader("forwarding for %s", fw.Name)
 			ports, err := fw.Forwarder.GetPorts()
 			if err != nil {
-				log.Fatalf("port forward error: %s", err)
+				util.LogError("port forward error: %s", err)
+				return
 			}
 			for _, port := range ports {
-				printList("%s:%d points to remote %s:%d", localIp, port.Local, fw.Name, port.Remote)
+				util.LogInfoListItem("%s:%d points to remote %s:%d", localIp, port.Local, fw.Name, port.Remote)
 			}
 		}
 
 		// we've now replaced the services and are forwarding the requested ports. Wait for the user to hit Ctrl+C
 		// so we can undo all of our changes
-		printInfo("forwarding ports, hit Ctrl+C to exit")
+		util.LogInfo("forwarding ports, hit Ctrl+C to exit")
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, os.Interrupt)
 
 		// wait on the Ctrl+C
 		<-signals
 
-		printHeader("cleaning up....")
-		for _, fw := range portForwards {
-			printList("closing port forward %s:%d", fw.Name, fw.Port)
-			fw.Forwarder.Close()
-		}
-
-		// deleter our endpoints
-		lo := metav1.ListOptions{
-			LabelSelector: "supplant=true",
-		}
-
-		eps, err := cs.CoreV1().Endpoints(metav1.NamespaceAll).List(ctx, lo)
-		if err != nil {
-			printError("error listing endpoints: %s", err)
-		} else {
-			for _, ep := range eps.Items {
-				err = cs.CoreV1().Endpoints(ep.Namespace).Delete(ctx, ep.Name, metav1.DeleteOptions{})
-				if err != nil {
-					printError("error deleting endpoints: %s", err)
-				}
-			}
-		}
-
-		// and replace our services which will re-create the endpoints based on the selectors
-		for _, sb := range serviceBackups {
-			printList("restoring service %s", sb.Name)
-			err = cs.CoreV1().Services(sb.Namespace).Delete(ctx, sb.Name, metav1.DeleteOptions{})
-			if err != nil {
-				log.Fatalf("error deleting existing service %s: %s", sb.Name, err)
-			}
-
-			prepareServiceForCreation(sb)
-			_, err = cs.CoreV1().Services(sb.Namespace).Create(ctx, sb, metav1.CreateOptions{})
-
-			if err != nil {
-				printError("error restoring %s: err", sb.Name, err)
-			}
-		}
+		util.LogInfoHeader("cleaning up....")
+		// all of the cleanup is done via defers so we can hopefully always return the state to what it was
+		// before we changed things
 	},
+}
+
+func restoreService(cs *kubernetes.Clientset, sb *v1.Service) {
+	ctx := context.TODO()
+	util.LogInfoListItem("restoring service %s", sb.Name)
+	err := cs.CoreV1().Services(sb.Namespace).Delete(ctx, sb.Name, metav1.DeleteOptions{})
+	if err != nil {
+		util.LogError("error deleting existing service %s: %s", sb.Name, err)
+	}
+
+	// try to re-create the service even if the deletion failed (maybe it was already gone?)
+	prepareServiceForCreation(sb)
+	_, err = cs.CoreV1().Services(sb.Namespace).Create(ctx, sb, metav1.CreateOptions{})
+
+	if err != nil {
+		util.LogError("error restoring %s: %s", sb.Name, err)
+	}
+}
+
+func closePortForward(fw kube.PortForwarder) {
+	util.LogInfoListItem("closing port forward %s:%d", fw.Name, fw.Port)
+	fw.Forwarder.Close()
+}
+
+// deleteSupplantedEndpoints deletes all supplants that we've created (either in this run or a previous run)
+func deleteSupplantedEndpoints(cs *kubernetes.Clientset) {
+	lo := metav1.ListOptions{
+		LabelSelector: "supplant=true",
+	}
+	ctx := context.Background()
+	eps, err := cs.CoreV1().Endpoints(metav1.NamespaceAll).List(ctx, lo)
+	if err != nil {
+		util.LogError("error listing endpoints: %s", err)
+	} else {
+		for _, ep := range eps.Items {
+			err = cs.CoreV1().Endpoints(ep.Namespace).Delete(ctx, ep.Name, metav1.DeleteOptions{})
+			if err != nil {
+				util.LogError("error deleting endpoints: %s", err)
+			}
+		}
+	}
 }
 
 // prepareServiceForCreation clears out some the properties on a service retrieved from K8s so we can use it

@@ -1,11 +1,11 @@
 package cmd
 
 import (
-	"log"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/tzneal/supplant/model"
+	"github.com/tzneal/supplant/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,25 +22,30 @@ used to remove all of the disabled services for a tidier config file.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		inputFile := args[0]
 		cfg := readConfig(inputFile)
+		if cfg == nil {
+			return
+		}
 
 		// filter out everything that is disabled
 		cfg.Supplant = filterSupplant(cfg.Supplant)
 		cfg.External = filterExternal(cfg.External)
-		writeConfig(cfg, inputFile)
+		writeConfig(*cfg, inputFile)
 	},
 }
 
-func readConfig(inputFile string) model.Config {
+func readConfig(inputFile string) *model.Config {
 	f, err := os.Open(inputFile)
 	if err != nil {
-		log.Fatalf("error opening %s: %s", inputFile, err)
+		util.LogError("error opening %s: %s", inputFile, err)
+		return nil
 	}
 	dec := yaml.NewDecoder(f)
 	cfg := model.Config{}
 	if err = dec.Decode(&cfg); err != nil {
-		log.Fatalf("error decoding %s: %s", inputFile, err)
+		util.LogError("error decoding %s: %s", inputFile, err)
+		return nil
 	}
-	return cfg
+	return &cfg
 }
 
 func filterSupplant(supplant []model.SupplantService) []model.SupplantService {
