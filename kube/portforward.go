@@ -18,19 +18,27 @@ import (
 type PortForwarder struct {
 	Namespace string
 	Name      string
-	Port      int32
-	LocalPort int32
+	Ports     []PortConfig
 	Forwarder *portforward.PortForwarder
 }
 
+type PortConfig struct {
+	LocalPort  int32
+	TargetPort int32
+}
+
 // PortForward opens up a socket for the given local IP address and port and forwards it to the specified service and target port.
-func PortForward(f cmdutil.Factory, namespace string, svcName string, targetPort int32, localIP net.IP, localPort int32) (PortForwarder, error) {
+func PortForward(f cmdutil.Factory, namespace string, svcName string, localIP net.IP, ports []PortConfig) (PortForwarder, error) {
 	builder := f.NewBuilder().WithScheme(scheme.Scheme, scheme.Scheme.PrioritizedVersionsAllGroups()...).
 		ContinueOnError().NamespaceParam(namespace)
 	builder.ResourceNames("pods", fmt.Sprintf("service/%s", svcName))
 	obj, err := builder.Do().Object()
 	if err != nil {
 		return PortForwarder{}, err
+	}
+	if len(ports) == 0 {
+		util.LogError("no ports specified for forwarding")
+		return PortForwarder{}, fmt.Errorf("no ports specified for forwarding")
 	}
 
 	getPodTimeout := 10 * time.Second
@@ -64,10 +72,13 @@ func PortForward(f cmdutil.Factory, namespace string, svcName string, targetPort
 	}
 
 	var strm genericclioptions.IOStreams
-	ports := []string{fmt.Sprintf("%d:%d", localPort, targetPort)}
+	var portList []string
+	for _, port := range ports {
+		portList = append(portList, fmt.Sprintf("%d:%d", port.LocalPort, port.TargetPort))
+	}
 	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", req.URL())
 	address := []string{localIP.String()}
-	fw, err := portforward.NewOnAddresses(dialer, address, ports, stop, ready, strm.Out, strm.ErrOut)
+	fw, err := portforward.NewOnAddresses(dialer, address, portList, stop, ready, strm.Out, strm.ErrOut)
 	if err != nil {
 		return PortForwarder{}, fmt.Errorf("error creating targetPort forward: %w", err)
 	}
@@ -82,8 +93,7 @@ func PortForward(f cmdutil.Factory, namespace string, svcName string, targetPort
 	return PortForwarder{
 		Namespace: namespace,
 		Name:      svcName,
-		Port:      targetPort,
-		LocalPort: localPort,
+		Ports:     ports,
 		Forwarder: fw,
 	}, nil
 }
