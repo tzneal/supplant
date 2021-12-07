@@ -209,8 +209,16 @@ inside the cluster as described by the configuration file.`,
 			if !externalSvc.Enabled {
 				continue
 			}
+			var pc []kube.PortConfig
 			for _, port := range externalSvc.Ports {
-				fw, err := kube.PortForward(f, externalSvc.Namespace, externalSvc.Name, port.TargetPort, localIp, port.LocalPort)
+				pc = append(pc, kube.PortConfig{
+					LocalPort:  port.LocalPort,
+					TargetPort: port.TargetPort,
+				})
+			}
+
+			if len(pc) > 0 {
+				fw, err := kube.PortForward(f, externalSvc.Namespace, externalSvc.Name, localIp, pc)
 				if err != nil {
 					util.LogError("error forwarding port for %s: %s", externalSvc.Name, err)
 					return
@@ -218,8 +226,8 @@ inside the cluster as described by the configuration file.`,
 				// ensure we close it
 				defer closePortForward(fw)
 				portForwards = append(portForwards, fw)
+				portForwardingAtLeastOne = true
 			}
-			portForwardingAtLeastOne = true
 		}
 
 		if !supplantingAtLeastOne && !portForwardingAtLeastOne {
@@ -273,7 +281,9 @@ func restoreService(cs *kubernetes.Clientset, sb *v1.Service) {
 }
 
 func closePortForward(fw kube.PortForwarder) {
-	util.LogInfoListItem("closing port forward %s:%d", fw.Name, fw.Port)
+	for _, p := range fw.Ports {
+		util.LogInfoListItem("closing port forward %s:%d", fw.Name, p.LocalPort)
+	}
 	fw.Forwarder.Close()
 }
 

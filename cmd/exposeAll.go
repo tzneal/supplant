@@ -52,20 +52,25 @@ every exposed service and port.`,
 			if len(svc.Spec.Selector) == 0 {
 				continue
 			}
+			var pc []kube.PortConfig
 			for _, port := range svc.Spec.Ports {
 				portNumber := pl.LookupPort(svc, port.TargetPort)
 				// doesn't support UDP port forwarding yet see https://github.com/kubernetes/kubernetes/issues/47862
 				if port.Protocol != "TCP" {
 					continue
 				}
-				fw, err := kube.PortForward(f, svc.Namespace, svc.Name, portNumber, localIp, 0)
+				pc = append(pc, kube.PortConfig{LocalPort: 0, TargetPort: portNumber})
+			}
+
+			if len(pc) > 0 {
+				fw, err := kube.PortForward(f, svc.Namespace, svc.Name, localIp, pc)
 				if err != nil {
 					util.LogError("error forwarding port for %s: %s", svc.Name, err)
 					return
 				}
 				portForwards = append(portForwards, fw)
+				portForwardingAtLeastOne = true
 			}
-			portForwardingAtLeastOne = true
 		}
 		if !portForwardingAtLeastOne {
 			util.LogError("no services found for port forwarding, exiting...")
@@ -94,7 +99,9 @@ every exposed service and port.`,
 
 		util.LogInfoHeader("cleaning up....")
 		for _, fw := range portForwards {
-			util.LogInfoListItem("closing port forward %s:%d", fw.Name, fw.Port)
+			for _, p := range fw.Ports {
+				util.LogInfoListItem("closing port forward %s:%d", fw.Name, p.LocalPort)
+			}
 			fw.Forwarder.Close()
 		}
 	},
