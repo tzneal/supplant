@@ -135,6 +135,7 @@ inside the cluster as described by the configuration file.`,
 			// and specify our new port mappings
 			for _, port := range supplantSvc.Ports {
 				var newPort v1.ServicePort
+				newPort.Name = port.Name
 				newPort.Port = port.Port
 				newPort.TargetPort = intstr.FromInt(int(port.LocalPort))
 				newPort.Protocol = svcPorts[port.Port].Protocol
@@ -186,6 +187,7 @@ inside the cluster as described by the configuration file.`,
 
 			for _, port := range supplantSvc.Ports {
 				ep.Subsets[0].Ports = append(ep.Subsets[0].Ports, v1.EndpointPort{
+					Name: port.Name,
 					Port: port.LocalPort,
 				})
 			}
